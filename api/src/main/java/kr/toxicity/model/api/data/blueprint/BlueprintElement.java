@@ -130,6 +130,9 @@ public sealed interface BlueprintElement {
         boolean visibility
     ) implements Bone {
 
+        // Minecraft accepts element coordinates from -16 to 32. Leave room for float rounding.
+        private static final float MAX_CENTERED_ELEMENT_COORDINATE = 24F - 1E-4F;
+
         /**
          * Returns the origin with inverted X and Z axes.
          *
@@ -171,7 +174,7 @@ public sealed interface BlueprintElement {
             var scale = scale();
             var list = mapIndexed(
                 CubeRotationGroups.group(filterIsInstance(children, Cube.class)
-                    .filter(cube -> cube.faces().uv().findAny().isPresent())
+                    .filter(Cube::hasTexturedFaces)
                     .toList()),
                 (i, model) -> buildJson(i + 1, scale, obfuscator, context, model)
             ).toList();
@@ -232,16 +235,32 @@ public sealed interface BlueprintElement {
         }
 
         /**
-         * Calculates the required scale for the cubes in this group.
+         * Calculates the scale shared by this group's item models and display to keep cube coordinates within client bounds.
+         * <pre>{@code
+         * var scale = group.scale();
+         * }</pre>
          *
          * @return the scale factor
          * @since 1.15.2
          */
         public float scale() {
-            return (float) Math.max(filterIsInstance(children, Cube.class)
-                .mapToDouble(e -> e.max(origin) / 16F)
-                .max()
-                .orElse(1F), 1F);
+            var cubes = filterIsInstance(children, Cube.class).toList();
+            var rotatesDisplay = cubes.stream()
+                .anyMatch(cube -> cube.hasTexturedFaces() && !MathUtil.checkValidDegree(cube.rotation()));
+            var scale = 1F;
+            for (var cube : cubes) {
+                var extent = cube.max(origin);
+                scale = Math.max(scale, extent / 16F);
+                if (!cube.hasTexturedFaces()) continue;
+
+                // Grouping can translate the pivot by a display rotation. Its distance from the
+                // group origin stays the same, and the corners keep their offsets from that pivot.
+                var jsonExtent = rotatesDisplay
+                    ? cube.max(cube.origin()) + cube.origin().minus(origin).toVector().length()
+                    : extent;
+                scale = Math.max(scale, (jsonExtent + Math.abs(cube.inflate())) / MAX_CENTERED_ELEMENT_COORDINATE);
+            }
+            return scale;
         }
 
         /**
@@ -351,6 +370,10 @@ public sealed interface BlueprintElement {
         @Nullable Integer lightEmission,
         boolean visibility
     ) implements BlueprintElement {
+
+        private boolean hasTexturedFaces() {
+            return !BlueprintFace.EMPTY.equals(faces);
+        }
 
         private static @NotNull Float3 centralize(@NotNull Float3 target, @NotNull Float3 groupOrigin, float scale) {
             return target.minus(groupOrigin).div(scale);

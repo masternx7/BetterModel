@@ -132,6 +132,31 @@ class CubeRotationGroupsTest {
         assertEquals(1, models(List.of(untextured, cubes(xRotations(90)).getFirst())).size());
     }
 
+    @Test
+    void keepsCubesWithDistantRotatedPivotsWithinClientBounds() {
+        var from = GROUP_ORIGIN.plus(new Float3(-16, 0, 0));
+        var pivot = GROUP_ORIGIN.plus(new Float3(16, 0, 0));
+        var rotation = new Float3(0, 180, 0);
+        var cube = new Cube("body", from, from.plus(new Float3(4, 4, 4)), 0.25F,
+            rotation, pivot, FACE, null, true);
+        var model = models(List.of(cube)).getFirst();
+        var element = model.getAsJsonArray("elements").get(0).getAsJsonObject();
+        for (var corner : List.of("from", "to")) {
+            for (var coordinate : element.getAsJsonArray(corner)) {
+                var value = coordinate.getAsFloat();
+                assertTrue(value >= -16F && value <= 32F, () -> "Invalid coordinate " + value);
+            }
+        }
+
+        var display = vector(model.getAsJsonObject("display").getAsJsonObject("fixed").getAsJsonArray("rotation"))
+            .toQuaternionXYZ();
+        var actual = vector(element.getAsJsonArray("from")).minus(Float3.CENTER).rotate(display)
+            .times(group(List.of(cube)).scale());
+        var expected = from.minus(new Float3(cube.inflate())).minus(pivot).rotate(rotation.toQuaternionZYX())
+            .plus(pivot).minus(GROUP_ORIGIN);
+        assertTrue(actual.toVector().distance(expected.toVector()) < 1E-4F);
+    }
+
     private static <T> T stub(Class<T> type, Map<String, ?> results) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, (_, method, _) -> {
             if (results.containsKey(method.getName())) return results.get(method.getName());

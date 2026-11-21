@@ -16,36 +16,30 @@ import net.citizensnpcs.api.util.DataKey
 
 @TraitName("model")
 class ModelTrait : Trait("model") {
-    private var _renderer: ModelRenderer? = null
     private var modelName: String? = null
     private var retryTicks = 0
 
-    var renderer
-        get() = _renderer
+    var renderer: ModelRenderer?
+        get() = modelName?.let(BetterModel::modelOrNull)
         set(value) {
             removeModel()
-            _renderer = value
             modelName = value?.name()
-            val entity = npc?.entity
-            if (entity != null && value != null) {
-                value.create(BukkitAdapter.adapt(entity))
-            }
+            applyModel()
         }
 
     override fun load(key: DataKey) {
         modelName = key.getString("")?.takeIf { it.isNotEmpty() }
-        _renderer = modelName?.let { runCatching { BetterModel.modelOrNull(it) }.getOrNull() }
     }
 
     override fun save(key: DataKey) {
         // Never read the name back from the live registry here. When the NPC is
         // despawned, BetterModel is reloading, or the model is not attached yet,
         // the lookup returns null and used to erase "model:" from saves.yml.
-        key.setString("", modelName ?: _renderer?.name())
+        key.setString("", modelName)
     }
 
     override fun run() {
-        if (_renderer != null || modelName == null)
+        if (modelName == null || npc?.isSpawned != true)
             return
         if (++retryTicks < RETRY_INTERVAL)
             return
@@ -70,20 +64,18 @@ class ModelTrait : Trait("model") {
     }
 
     private fun applyModel() {
-        val entity = npc?.entity ?: return
-        val renderer = _renderer
-            ?: modelName?.let { runCatching { BetterModel.modelOrNull(it) }.getOrNull() }?.also { _renderer = it }
-            ?: return
+        val name = modelName ?: return
+        val entity = npc?.takeIf { it.isSpawned }?.entity ?: return
         val registry = BetterModel.registryOrNull(entity.uniqueId)
-        if (registry?.tracker(renderer.name()) == null) {
-            renderer.create(BukkitAdapter.adapt(entity))
-        }
+        // A reload temporarily closes the registry while it rebuilds its trackers.
+        if (registry?.isClosed == true || registry?.tracker(name)?.isClosed == false) return
+        renderer?.create(BukkitAdapter.adapt(entity))
     }
 
     private fun removeModel() {
         val entity = npc?.entity ?: return
-        val name = _renderer?.name() ?: modelName ?: return
-        BetterModel.registryOrNull(entity.uniqueId)?.tracker(name)?.close()
+        val name = modelName ?: return
+        BetterModel.registryOrNull(entity.uniqueId)?.remove(name)
     }
 
     private companion object {
